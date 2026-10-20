@@ -1,0 +1,160 @@
+name: PR Title
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    name: PR Title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const TYPES = ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
+            const MAX_LENGTH = 72;
+            const MARKER = '<!-- pr-title-lint -->';
+
+            const pr = context.payload.pull_request;
+            const title = pr.title;
+            const code = (s) => (s.includes('`') ? '`` ' + s + ' ``' : '`' + s + '`');
+            const allowed = TYPES.map((t) => code(t)).join(', ');
+
+            // Returns every problem found plus a suggested fixed title.
+            function lint(title) {
+              const problems = [];
+              const text = title.trim();
+              if (text !== title) {
+                problems.push('The title has leading or trailing whitespace. Remove it.');
+              }
+
+              // Split "type(scope)!: subject". Without a valid header, the whole title is the subject.
+              const colon = text.indexOf(':');
+              const head = colon === -1 ? null : /^([^\s:()!]*)(?:\(([^)]*)\))?(!?)$/.exec(text.slice(0, colon));
+              let type = null;
+              let scope;
+              let bang = '';
+              let subject = text;
+              if (!head) {
+                problems.push(
+                  'The title has no `type:` prefix. Start it with one of the allowed types followed by a colon, like `feat: add login`.',
+                );
+              } else {
+                [, type, scope, bang] = head;
+                const rest = text.slice(colon + 1);
+                subject = rest.trim();
+
+                if (type === '') {
+                  problems.push('The type before the colon is missing. Start the title with one of the allowed types.');
+                } else if (!TYPES.includes(type)) {
+                  problems.push(
+                    TYPES.includes(type.toLowerCase())
+                      ? `The type ${code(type)} must be lowercase. Use ${code(type.toLowerCase())}.`
+                      : `The type ${code(type)} is not allowed. Use one of: ${allowed}.`,
+                  );
+                }
+                if (scope !== undefined && !/^[a-z0-9-]+$/.test(scope)) {
+                  problems.push(
+                    `The scope ${code('(' + scope + ')')} is invalid. A scope is optional, but if present it must be lowercase letters, digits or hyphens, like ${code('(cli)')}.`,
+                  );
+                }
+                if (subject !== '' && !rest.startsWith(' ')) {
+                  problems.push('There must be exactly one space after the colon. Add one: `type: subject`.');
+                } else if (subject !== '' && rest.startsWith('  ')) {
+                  problems.push('There must be exactly one space after the colon, not more.');
+                }
+              }
+
+              if (subject === '') {
+                problems.push('The subject is empty. Describe the change after the colon.');
+              } else {
+                if (/^\p{Lu}/u.test(subject)) {
+                  problems.push('The subject must start with a lowercase letter, like `add login` instead of `Add login`.');
+                }
+                if (subject.endsWith('.')) {
+                  problems.push('The subject must not end with a period.');
+                }
+              }
+
+              if (title.length > MAX_LENGTH) {
+                problems.push(
+                  `The title is ${title.length} characters long. The maximum is ${MAX_LENGTH}, which leaves room for the ` +
+                    ' (#123) that is appended to the squash commit on main. Shorten it.',
+                );
+              }
+
+              // Keep what is valid, fall back to placeholders for the rest.
+              const fixedType = type && TYPES.includes(type.toLowerCase()) ? type.toLowerCase() : '<type>';
+              const fixedScope = scope !== undefined && /^[a-z0-9-]+$/i.test(scope) ? `(${scope.toLowerCase()})` : '';
+              const fixedSubject =
+                subject.replace(/\.+$/, '').trim().replace(/^\p{Lu}/u, (c) => c.toLowerCase()) || '<subject>';
+              const suggestion = `${fixedType}${fixedScope}${bang ?? ''}: ${fixedSubject}`;
+
+              return { problems, suggestion };
+            }
+
+            function report({ problems, suggestion }) {
+              return [
+                MARKER,
+                '### PR title check failed',
+                '',
+                `Current title: ${code(title)}`,
+                '',
+                'Problems:',
+                ...problems.map((p) => `- ${p}`),
+                '',
+                'Expected format: `type(scope)!: subject`. The scope and the `!` (breaking change) are optional.',
+                '',
+                'Examples:',
+                '- `feat: add login`',
+                '- `fix(cli): handle empty input`',
+                '- `feat!: drop node 18`',
+                '',
+                `Allowed types: ${allowed}.`,
+                '',
+                `Suggested title: ${code(suggestion)}`,
+                ...(suggestion.length > MAX_LENGTH ? ['', `The suggestion is still over ${MAX_LENGTH} characters, so shorten it too.`] : []),
+                '',
+                `Fix it by editing the PR title. No new commits are needed, and this check re-runs when the title changes. For example: ${code(`gh pr edit ${pr.number} --title "<new title>"`)}`,
+              ].join('\n');
+            }
+
+            const { owner, repo } = context.repo;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+            const existing = comments.find((c) => c.body && c.body.startsWith(MARKER));
+
+            const result = lint(title);
+            if (result.problems.length === 0) {
+              if (existing) {
+                await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
+              }
+              await core.summary.addRaw(`PR title is valid: ${code(title)}`).write();
+              core.info(`PR title is valid: "${title}"`);
+              return;
+            }
+
+            const body = report(result);
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+            }
+            await core.summary.addRaw(body.replace(MARKER + '\n', '')).write();
+            const more = result.problems.length - 1;
+            core.setFailed(
+              `Invalid PR title: ${result.problems[0]}${more ? ` (+${more} more)` : ''} Suggested: ${result.suggestion}`,
+            );
