@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  electron-winstaller: true
+
+overrides:
+  caniuse-lite: 1.0.30001817
+  electron-to-chromium: 1.5.461
+  vite: 8.3.4

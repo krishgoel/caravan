@@ -1,0 +1,19 @@
+appId: com.caravan.app
+productName: Caravan
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+directories:
+  output: ../../release
+files:
+  - out/**/*
+extraResources:
+  - from: ../backend/dist
+    to: backend
+linux:
+  target: AppImage
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+win:
+  target: nsis
