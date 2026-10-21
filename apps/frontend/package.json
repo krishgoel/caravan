@@ -3,6 +3,8 @@
 	"version": "0.0.1",
 	"private": true,
 	"description": "Caravan desktop application",
+	"author": "Caravan contributors",
+	"desktopName": "Caravan",
 	"main": "./out/main/index.js",
 	"scripts": {
 		"build": "electron-vite build",
