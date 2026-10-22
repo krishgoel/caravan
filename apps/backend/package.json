@@ -1,0 +1,11 @@
+{
+	"name": "@caravan/backend",
+	"private": true,
+	"scripts": {
+		"build": "tsc",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@caravan/api-contract": "workspace:*"
+	}
+}

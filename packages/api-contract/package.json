@@ -1,0 +1,13 @@
+{
+	"name": "@caravan/api-contract",
+	"private": true,
+	"types": "./src/index.ts",
+	"exports": {
+		".": {
+			"types": "./src/index.ts"
+		}
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit"
+	}
+}
